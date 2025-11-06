@@ -1,6 +1,8 @@
 package com.example.lab_week_09
 
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -12,9 +14,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.lab_week_09.ui.theme.LAB_WEEK_09Theme
 import com.example.lab_week_09.ui.theme.OnBackgroundItemText
@@ -26,11 +28,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import com.squareup.moshi.Types
 
 //Previously we extend AppCompatActivity,
 //now we extend ComponentActivity
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         //Here, we use setContent instead of setContentView
@@ -46,11 +50,8 @@ class MainActivity : ComponentActivity() {
                     //and set it as the color of the surface
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Don’t forget to also change your root from Home() to App() inside your Surface function.
                     val navController = rememberNavController()
-                    App(
-                        navController = navController
-                    )
+                    App(navController = navController)
                 }
             }
         }
@@ -61,85 +62,78 @@ class MainActivity : ComponentActivity() {
 //This will be the root composable of the app
 @Composable
 fun App(navController: NavHostController) {
-    //Here, we use NavHost to create a navigation graph
-    //We pass the navController as a parameter
-    //We also set the startDestination to "home"
-    //This means that the app will start with the Home composable
     NavHost(
         navController = navController,
         startDestination = "home"
     ) {
-        //Here, we create a route called "home"
-        //We pass the Home composable as a parameter
-        //This means that when the app navigates to "home",
-        //the Home composable will be displayed
+        //Home route: navigate to Result with JSON string
         composable("home") {
-            //Here, we pass a lambda function that navigates to "resultContent"
-            //and pass the listData as a parameter
-            Home { navController.navigate(
-                "resultContent/?listData=$it")
-            }
+            Home { jsonEncoded -> navController.navigate("resultContent/?listData=$jsonEncoded") }
         }
 
-        //Here, we create a route called "resultContent"
-        //We pass the ResultContent composable as a parameter
-        //This means that when the app navigates to "resultContent",
-        //the ResultContent composable will be displayed
-        //You can also define arguments for the route
-        //Here, we define a String argument called "listData"
-        //We use navArgument to define the argument
-        //We use NavType.StringType to define the type of the argument
+        //Result route: receives JSON string "listData"
         composable(
             "resultContent/?listData={listData}",
-            arguments = listOf(navArgument("listData") {
-                type = NavType.StringType }
-            )
+            arguments = listOf(navArgument("listData") { type = NavType.StringType })
         ) {
-            //Here, we pass the value of the argument to the ResultContent composable
-            ResultContent(
-                it.arguments?.getString("listData").orEmpty()
-            )
+            ResultContent(it.arguments?.getString("listData").orEmpty())
         }
     }
 }
 
 //Declare a data class called Student
-data class Student(
-    var name: String
-)
+data class Student(var name: String)
 
 //Now let’s update the Home Composable and add 1 more parameter into it.
 @Composable
 fun Home(
+    // For BONUS we pass an already-encoded JSON string up to the navigator
     navigateFromHomeToResult: (String) -> Unit
 ) {
-    //Here, we create a mutable state list of Student
-    //We use remember to make the list remember its value
-    //This is so that the list won't be recreated when the composable recomposes
-    //We use mutableStateListOf to make the list mutable
-    //This is so that we can add or remove items from the list
-    //If you're still confused, this is basically the same concept as using useState in React
-    val listData = remember { mutableStateListOf(
-        Student("Tanu"),
-        Student("Tina"),
-        Student("Tono")
-    )}
+    val context = LocalContext.current // needed for Toast
 
-    //Here, we create a mutable state of Student
-    //This is so that we can get the value of the input field
+    // State: list of students (rendered in Home and later serialized)
+    val listData = remember {
+        mutableStateListOf(
+            Student("Tanu"),
+            Student("Tina"),
+            Student("Tono")
+        )
+    }
+
+    // State: input field
     var inputField by remember { mutableStateOf(Student("")) }
 
-    //Now, update your calling function for Home Content Composable inside your Home Composable
-    //and add the extra parameter for navigating.
+    // Moshi setup (one-time)
+    val moshi = remember {
+        Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+    }
+    val listType = remember {
+        Types.newParameterizedType(List::class.java, Student::class.java)
+    }
+    val adapter = remember { moshi.adapter<List<Student>>(listType) }
+
     HomeContent(
         listData,
         inputField,
         { input -> inputField = inputField.copy(input) },
         {
-            listData.add(inputField)
-            inputField = inputField.copy("")
+            val value = inputField.name.trim()
+            if (value.isNotEmpty()) {
+                listData.add(Student(value))
+                inputField = inputField.copy("")
+            } else {
+                Toast.makeText(context, "Please enter name", Toast.LENGTH_SHORT).show()
+            }
         },
-        { navigateFromHomeToResult(listData.toList().toString()) }
+        {
+            // BONUS: serialize list to JSON, URL-encode, then navigate
+            val json = adapter.toJson(listData.toList())
+            val encoded = Uri.encode(json)
+            navigateFromHomeToResult(encoded)
+        }
     )
 }
 
@@ -152,9 +146,7 @@ fun HomeContent(
     onButtonClick: () -> Unit,
     navigateFromHomeToResult: () -> Unit
 ) {
-    //Here, we use LazyColumn to display a list of items lazily
     LazyColumn {
-        //Here, we use item to display an item inside the LazyColumn
         item {
             Column(
                 //Modifier.padding(16.dp) is used to add padding to the Column
@@ -169,9 +161,7 @@ fun HomeContent(
                 //You can also use verticalArrangement = Arrangement.Center to align the Column vertically
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                OnBackgroundTitleText(text = stringResource(
-                    id = R.string.enter_item)
-                )
+                OnBackgroundTitleText(text = stringResource(id = R.string.enter_item))
 
                 TextField(
                     //Set the value of the input field
@@ -181,13 +171,13 @@ fun HomeContent(
                         keyboardType = KeyboardType.Text
                     ),
                     //Set what happens when the value of the input field changes
-                    onValueChange = {
-                        onInputValueChange(it)
-                    }
+                    onValueChange = { onInputValueChange(it) },
+                    // optional visual cue
+                    isError = inputField.name.trim().isEmpty()
                 )
 
-                // Next still in your HomeContent Composable, add a Finish Button to navigate to the other page.
                 Row {
+                    //Here, we call the PrimaryTextButton UI Element
                     PrimaryTextButton(text = stringResource(id = R.string.button_click)) {
                         onButtonClick()
                     }
@@ -197,9 +187,7 @@ fun HomeContent(
                 }
             }
         }
-        //Here, we use items to display a list of items inside the LazyColumn
-        //This is the RecyclerView replacement
-        //We pass the listData as a parameter
+        // Show current list in Home
         items(listData) { item ->
             Column(
                 modifier = Modifier
@@ -219,13 +207,41 @@ fun HomeContent(
 //then displays the value of listData to the screen
 @Composable
 fun ResultContent(listData: String) {
+    val moshi = remember {
+        Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+    }
+    val listType = remember {
+        Types.newParameterizedType(List::class.java, Student::class.java)
+    }
+    val adapter = remember { moshi.adapter<List<Student>>(listType) }
+
+    val decoded = remember(listData) { Uri.decode(listData) }
+    val parsed: List<Student> = remember(decoded) {
+        // Safely parse; fall back to empty list if malformed
+        runCatching { adapter.fromJson(decoded) ?: emptyList() }
+            .getOrElse { emptyList() }
+    }
+
     Column(
         modifier = Modifier
             .padding(vertical = 4.dp)
             .fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        //Here, we call the OnBackgroundItemText UI Element
-        OnBackgroundItemText(text = listData)
+        // Display the parsed list with LazyColumn
+        LazyColumn {
+            items(parsed) { item ->
+                Column(
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    OnBackgroundItemText(text = item.name)
+                }
+            }
+        }
     }
 }
